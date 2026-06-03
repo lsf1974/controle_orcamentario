@@ -1,7 +1,7 @@
 # Sistema de Controle Financeiro Multi-usuário — Design Document
 
 **Data:** 2026-06-03
-**Versão:** 1.1 (revisado após code review)
+**Versão:** 1.2 (segunda revisão após code review)
 **Status:** Aprovado para implementação
 
 ---
@@ -147,7 +147,7 @@ O schema completo está em `backend/prisma/schema.prisma`. Resumo das entidades:
 - `User` — usuário do sistema com SystemRole, 2FA opcional, soft delete
 - `RefreshToken` — tokens de sessão com revogação por dispositivo; índice em `userId` para performance no logout
 - `TelegramLinkToken` — token de 6 dígitos para vincular Telegram (TTL: 10 min)
-- `PasswordResetToken` — token de recuperação de senha (TTL: 30 min, invalidado após uso); auditável
+- `PasswordResetToken` — token de recuperação de senha (TTL: 30 min, invalidado após uso); ao gerar novo token, todos os tokens anteriores não usados do mesmo `userId` são invalidados para evitar race condition
 - `ProjectUser` — associação N:N entre User e Project com ProjectRole
 
 **Projetos:**
@@ -174,7 +174,7 @@ O schema completo está em `backend/prisma/schema.prisma`. Resumo das entidades:
 ### 5.2 Padrões Aplicados a Todas as Entidades
 
 - **Soft delete:** campo `deletedAt DateTime?` — registros deletados nunca são removidos do banco. **Exceções intencionais:** `BudgetMonthlyValue` e `TransactionSplit` são entidades de valor derivado sem ciclo de vida próprio — são recriados junto com sua entidade pai.
-- **Prisma middleware global de soft delete:** o `PrismaService` registra middleware que adiciona `where: { deletedAt: null }` automaticamente em todas as queries `findMany`, `findFirst` e `findUnique` de entidades com o campo `deletedAt`. Isso evita que queries ad hoc exponham registros deletados por omissão do filtro.
+- **Prisma middleware global de soft delete:** o `PrismaService` registra middleware no construtor (antes de `$connect`) que: (1) injeta `deletedAt: null` em `findMany`/`findFirst`/`findUnique` **somente se o caller não especificou `deletedAt` explicitamente** — permitindo queries de auditoria com `{ deletedAt: { not: null } }`; (2) redireciona `delete`/`deleteMany` para `update`/`updateMany` com `{ deletedAt: new Date() }`. Modelos sem `deletedAt` (`RefreshToken`, `PasswordResetToken`, etc.) não são interceptados. A lista de modelos usa `Set` para lookup O(1).
 - **Auditoria:** `createdAt`, `updatedAt` em todas as entidades mutáveis
 - **IDs:** CUID (`@default(cuid())`) — evita colisões em ambientes distribuídos
 - **approvalStatus default:** `Transaction.approvalStatus` tem `@default(PENDING)`. O service de criação de lançamentos define `approvalStatus: APPROVED` explicitamente apenas para Admin e Gestor.
@@ -231,7 +231,7 @@ Open Finance Brasil OAuth2, WhatsApp via Evolution API, 2FA para todos os usuár
 6. Logout → POST /auth/logout (revoga todos os refresh tokens do usuário no DB)
 ```
 
-**Race condition em refreshes paralelos:** o interceptor do axios usa flag `isRefreshing` + fila de promises pendentes. Quando múltiplas requests recebem 401 simultaneamente, apenas a primeira executa o refresh; as demais aguardam o par novo e reenviam com o novo accessToken.
+**Race condition em refreshes paralelos:** o interceptor do axios usa flag `isRefreshing` + fila de promises pendentes. Quando múltiplas requests recebem 401 simultaneamente, apenas a primeira executa o refresh; as demais aguardam o par novo e reenviam com o novo accessToken. **O interceptor só opera no browser** (`typeof window !== 'undefined'`) — em Next.js SSR, 401s são rejeitados diretamente pois não há `localStorage` nem sessão de usuário individual no servidor.
 
 ### 7.4 ProjectAccessGuard — Cache Redis
 Para evitar uma query ao banco em toda request autenticada, o `ProjectAccessGuard` armazena o resultado da verificação `userId:projectId → role` no Redis com TTL de 60 segundos. O cache é invalidado quando o `ProjectUser` é criado, atualizado ou removido.

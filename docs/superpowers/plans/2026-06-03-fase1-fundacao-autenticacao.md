@@ -415,11 +415,22 @@ const schema = z.object({
 
 export default registerAs('jwt', () => {
   const parsed = schema.parse(process.env);
+
+  // Converte '7d' → 7, '30d' → 30. Valida formato no startup para falha ruidosa.
+  const match = parsed.JWT_REFRESH_EXPIRES_IN.match(/^(\d+)d$/);
+  if (!match) {
+    throw new Error(
+      `JWT_REFRESH_EXPIRES_IN deve estar no formato "Nd" (ex: "7d"). Recebido: "${parsed.JWT_REFRESH_EXPIRES_IN}"`,
+    );
+  }
+  const refreshExpiresInDays = parseInt(match[1], 10);
+
   return {
     secret: parsed.JWT_SECRET,
     refreshSecret: parsed.JWT_REFRESH_SECRET,
     expiresIn: parsed.JWT_EXPIRES_IN,
     refreshExpiresIn: parsed.JWT_REFRESH_EXPIRES_IN,
+    refreshExpiresInDays,
   };
 });
 ```
@@ -678,6 +689,9 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
+  // Regra de negócio (enforçada no service, não no schema):
+  // ao gerar novo token, invalidar todos os tokens anteriores do mesmo userId
+  // via: prisma.passwordResetToken.updateMany({ where: { userId, usedAt: null }, data: { usedAt: new Date() } })
 }
 
 model TelegramLinkToken {
@@ -1001,7 +1015,7 @@ model Transaction {
   dueDate          DateTime
   paymentDate      DateTime?
   status           TransactionStatus @default(PLANNED)
-  approvalStatus   ApprovalStatus    @default(PENDING)
+  approvalStatus   ApprovalStatus    @default(PENDING) // ATENÇÃO Fase 4: service deve setar APPROVED explicitamente para ADMIN e GESTOR
   approvedByUserId String?
   approvalNote     String?
   source           TransactionSource @default(WEB)
@@ -1137,6 +1151,12 @@ npx prisma migrate dev --name init
 ```
 
 Saída esperada: `✔ Generated Prisma Client` e `Your database is now in sync with your schema.`
+
+> **Recovery — banco existente com schema antigo:** se o Prisma reportar drift (`There is a drift between your Prisma schema and your database`), execute:
+> ```powershell
+> npx prisma migrate dev --name add-password-reset-token
+> ```
+> Se o drift for irrecuperável (ambiente de desenvolvimento): `npx prisma migrate reset --force` (apaga e recria o banco dev).
 
 - [ ] **Step 3.3: Criar `backend/prisma/seed.ts`** (seed com admin inicial)
 
@@ -1410,28 +1430,52 @@ import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit {
-  async onModuleInit() {
-    await this.$connect();
+  constructor() {
+    super();
+    // Middleware deve ser registrado ANTES de $connect para interceptar queries do startup
     this.applySoftDeleteMiddleware();
   }
 
+  async onModuleInit() {
+    await this.$connect();
+  }
+
   private applySoftDeleteMiddleware() {
-    const SOFT_DELETE_MODELS = [
+    const SOFT_DELETE_MODELS = new Set([
       'User', 'Project', 'Client', 'Supplier', 'AccountCategory',
       'BankAccount', 'CreditCard', 'CostCenter', 'Transaction',
-    ];
+    ]);
 
     this.$use(async (params, next) => {
-      if (!SOFT_DELETE_MODELS.includes(params.model ?? '')) return next(params);
+      if (!SOFT_DELETE_MODELS.has(params.model ?? '')) return next(params);
 
-      if (params.action === 'findUnique' || params.action === 'findFirst') {
-        params.action = 'findFirst';
-        params.args.where = { ...params.args.where, deletedAt: null };
-      }
-      if (params.action === 'findMany') {
+      // Leitura: não sobrescrever deletedAt intencional (ex: queries de auditoria)
+      const isReadAction = params.action === 'findUnique'
+        || params.action === 'findFirst'
+        || params.action === 'findMany';
+
+      if (isReadAction) {
         params.args = params.args ?? {};
-        params.args.where = { ...params.args.where, deletedAt: null };
+        params.args.where = params.args.where ?? {};
+        // Só injeta filtro se caller não especificou deletedAt explicitamente
+        if (!('deletedAt' in params.args.where)) {
+          params.args.where.deletedAt = null;
+        }
+        if (params.action === 'findUnique') {
+          params.action = 'findFirst';
+        }
       }
+
+      // Escrita: redirecionar delete para soft delete
+      if (params.action === 'delete') {
+        params.action = 'update';
+        params.args.data = { deletedAt: new Date() };
+      }
+      if (params.action === 'deleteMany') {
+        params.action = 'updateMany';
+        params.args.data = { deletedAt: new Date() };
+      }
+
       return next(params);
     });
   }
@@ -1743,13 +1787,19 @@ export class AuthService {
   }
 
   async refreshTokens(token: string) {
-    const stored = await this.prisma.refreshToken.findUnique({
-      where: { token },
-      include: { user: true },
-    });
+    // Valida o token antes de buscar dados do usuário — evita carregar passwordHash em tokens inválidos
+    const stored = await this.prisma.refreshToken.findUnique({ where: { token } });
 
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
-      throw new UnauthorizedException('Refresh token inválido ou expirado');
+    if (!stored || stored.revokedAt) {
+      throw new UnauthorizedException('Refresh token inválido ou revogado');
+    }
+    if (stored.expiresAt < new Date()) {
+      throw new UnauthorizedException('Refresh token expirado — faça login novamente');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: stored.userId } });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Usuário inativo');
     }
 
     await this.prisma.refreshToken.update({
@@ -1758,10 +1808,10 @@ export class AuthService {
     });
 
     return this.generateTokens({
-      id: stored.user.id,
-      name: stored.user.name,
-      email: stored.user.email,
-      systemRole: stored.user.systemRole,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      systemRole: user.systemRole,
     });
   }
 
@@ -1783,8 +1833,7 @@ export class AuthService {
     });
 
     const refreshTokenValue = randomBytes(40).toString('hex');
-    const refreshExpiresIn = this.config.get<string>('jwt.refreshExpiresIn') ?? '7d';
-    const days = parseInt(refreshExpiresIn.replace('d', ''), 10) || 7;
+    const days = this.config.get<number>('jwt.refreshExpiresInDays') ?? 7;
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + days);
 
@@ -2829,21 +2878,30 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Fila de requests aguardando o refresh completar (evita race condition)
+// Interceptor de refresh só opera no browser — no servidor (Next.js SSR) não há
+// localStorage nem sessão de usuário individual, então rejeitamos 401 diretamente.
+const isBrowser = typeof window !== 'undefined';
+
+// Estado de refresh por processo de browser (SPA client-side apenas)
 let isRefreshing = false;
 let pendingQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = [];
 
 function processQueue(error: unknown, token: string | null) {
-  pendingQueue.forEach(({ resolve, reject }) => {
-    if (error) reject(error);
-    else resolve(token!);
-  });
+  const queue = pendingQueue;
   pendingQueue = [];
+  if (error) {
+    queue.forEach(({ reject }) => reject(error));
+  } else {
+    queue.forEach(({ resolve }) => resolve(token as string));
+  }
 }
 
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
+    // Em SSR não há localStorage nem sessão de usuário — rejeitar diretamente
+    if (!isBrowser) return Promise.reject(error);
+
     const original = error.config;
 
     if (error.response?.status !== 401 || original._retry) {
@@ -2851,10 +2909,10 @@ api.interceptors.response.use(
     }
 
     if (isRefreshing) {
-      // Aguarda o refresh em andamento e tenta novamente com o novo token
       return new Promise((resolve, reject) => {
         pendingQueue.push({
           resolve: (token) => {
+            original.headers = original.headers ?? {};
             original.headers.Authorization = `Bearer ${token}`;
             resolve(api(original));
           },
@@ -2876,10 +2934,14 @@ api.interceptors.response.use(
 
     try {
       const { data } = await axios.post(`${API_URL}/auth/refresh`, { refreshToken });
+      if (!data?.accessToken || !data?.refreshToken) {
+        throw new Error('Resposta de refresh inválida');
+      }
       localStorage.setItem('accessToken', data.accessToken);
       localStorage.setItem('refreshToken', data.refreshToken);
       api.defaults.headers.common.Authorization = `Bearer ${data.accessToken}`;
       processQueue(null, data.accessToken);
+      original.headers = original.headers ?? {};
       original.headers.Authorization = `Bearer ${data.accessToken}`;
       return api(original);
     } catch (err) {
