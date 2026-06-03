@@ -1,7 +1,7 @@
 # Sistema de Controle Financeiro Multi-usuário — Design Document
 
 **Data:** 2026-06-03
-**Versão:** 1.2 (segunda revisão após code review)
+**Versão:** 1.3 (terceira revisão após code review)
 **Status:** Aprovado para implementação
 
 ---
@@ -174,7 +174,7 @@ O schema completo está em `backend/prisma/schema.prisma`. Resumo das entidades:
 ### 5.2 Padrões Aplicados a Todas as Entidades
 
 - **Soft delete:** campo `deletedAt DateTime?` — registros deletados nunca são removidos do banco. **Exceções intencionais:** `BudgetMonthlyValue` e `TransactionSplit` são entidades de valor derivado sem ciclo de vida próprio — são recriados junto com sua entidade pai.
-- **Prisma middleware global de soft delete:** o `PrismaService` registra middleware no construtor (antes de `$connect`) que: (1) injeta `deletedAt: null` em `findMany`/`findFirst`/`findUnique` **somente se o caller não especificou `deletedAt` explicitamente** — permitindo queries de auditoria com `{ deletedAt: { not: null } }`; (2) redireciona `delete`/`deleteMany` para `update`/`updateMany` com `{ deletedAt: new Date() }`. Modelos sem `deletedAt` (`RefreshToken`, `PasswordResetToken`, etc.) não são interceptados. A lista de modelos usa `Set` para lookup O(1).
+- **Prisma middleware global de soft delete:** o `PrismaService` registra middleware no construtor (antes de `$connect`) que: (1) injeta `deletedAt: null` em leituras (`findUnique`, `findFirst`, `findUniqueOrThrow`, `findFirstOrThrow`, `findMany`, `count`, `aggregate`, `groupBy`) **somente se o caller não especificou `deletedAt` explicitamente**; (2) converte `findUnique` → `findFirst` e `findUniqueOrThrow` → `findFirstOrThrow` para suportar o campo extra no where; (3) redireciona `delete` → `update` preservando `select`/`include` do caller; (4) redireciona `deleteMany` → `updateMany` com guard obrigatório de `where` não-vazio (lança erro se chamado sem where). Modelos sem `deletedAt` não são interceptados. Lista usa `Set` para O(1).
 - **Auditoria:** `createdAt`, `updatedAt` em todas as entidades mutáveis
 - **IDs:** CUID (`@default(cuid())`) — evita colisões em ambientes distribuídos
 - **approvalStatus default:** `Transaction.approvalStatus` tem `@default(PENDING)`. O service de criação de lançamentos define `approvalStatus: APPROVED` explicitamente apenas para Admin e Gestor.
@@ -231,7 +231,9 @@ Open Finance Brasil OAuth2, WhatsApp via Evolution API, 2FA para todos os usuár
 6. Logout → POST /auth/logout (revoga todos os refresh tokens do usuário no DB)
 ```
 
-**Race condition em refreshes paralelos:** o interceptor do axios usa flag `isRefreshing` + fila de promises pendentes. Quando múltiplas requests recebem 401 simultaneamente, apenas a primeira executa o refresh; as demais aguardam o par novo e reenviam com o novo accessToken. **O interceptor só opera no browser** (`typeof window !== 'undefined'`) — em Next.js SSR, 401s são rejeitados diretamente pois não há `localStorage` nem sessão de usuário individual no servidor.
+**Race condition em refreshes paralelos:** o interceptor do axios usa flag `isRefreshing` + fila de promises pendentes. Quando múltiplas requests recebem 401 simultaneamente, apenas a primeira executa o refresh; as demais aguardam o par novo e reenviam com o novo accessToken. **O interceptor só opera no browser** (`typeof window !== 'undefined'`) — em Next.js SSR, 401s são rejeitados diretamente. Em logout ou falha de refresh, apenas as 3 chaves de auth são removidas (`removeItem`) — não `localStorage.clear()`.
+
+**Race condition de refresh token rotation (server-side):** o `refreshTokens()` usa `updateMany({ where: { token, revokedAt: null, expiresAt: { gt: now } } })` como operação atômica. Se `count === 0`, o token já foi revogado ou expirado. Isso elimina a janela entre validação e revogação presente em uma abordagem de duas queries separadas.
 
 ### 7.4 ProjectAccessGuard — Cache Redis
 Para evitar uma query ao banco em toda request autenticada, o `ProjectAccessGuard` armazena o resultado da verificação `userId:projectId → role` no Redis com TTL de 60 segundos. O cache é invalidado quando o `ProjectUser` é criado, atualizado ou removido.

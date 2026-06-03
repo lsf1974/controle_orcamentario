@@ -429,8 +429,7 @@ export default registerAs('jwt', () => {
     secret: parsed.JWT_SECRET,
     refreshSecret: parsed.JWT_REFRESH_SECRET,
     expiresIn: parsed.JWT_EXPIRES_IN,
-    refreshExpiresIn: parsed.JWT_REFRESH_EXPIRES_IN,
-    refreshExpiresInDays,
+    refreshExpiresInDays, // número de dias — único campo de expiração do refresh consumido pelo AuthService
   };
 });
 ```
@@ -1449,29 +1448,43 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
     this.$use(async (params, next) => {
       if (!SOFT_DELETE_MODELS.has(params.model ?? '')) return next(params);
 
-      // Leitura: não sobrescrever deletedAt intencional (ex: queries de auditoria)
-      const isReadAction = params.action === 'findUnique'
-        || params.action === 'findFirst'
-        || params.action === 'findMany';
+      const action = params.action;
 
-      if (isReadAction) {
+      // Leitura singular/plural + agregações: injeta deletedAt: null se caller não especificou
+      const isFilteredRead = action === 'findUnique'
+        || action === 'findFirst'
+        || action === 'findUniqueOrThrow'
+        || action === 'findFirstOrThrow'
+        || action === 'findMany'
+        || action === 'count'
+        || action === 'aggregate'
+        || action === 'groupBy';
+
+      if (isFilteredRead) {
         params.args = params.args ?? {};
         params.args.where = params.args.where ?? {};
-        // Só injeta filtro se caller não especificou deletedAt explicitamente
         if (!('deletedAt' in params.args.where)) {
           params.args.where.deletedAt = null;
         }
-        if (params.action === 'findUnique') {
-          params.action = 'findFirst';
-        }
+        // findUnique/findUniqueOrThrow → findFirst/findFirstOrThrow (suporta campo extra no where)
+        if (action === 'findUnique') params.action = 'findFirst';
+        if (action === 'findUniqueOrThrow') params.action = 'findFirstOrThrow';
       }
 
-      // Escrita: redirecionar delete para soft delete
-      if (params.action === 'delete') {
+      // Escrita: redirecionar delete → soft delete via update
+      if (action === 'delete') {
         params.action = 'update';
-        params.args.data = { deletedAt: new Date() };
+        // Preservar select/include do caller; apenas sobrescrever data
+        params.args.data = { ...params.args.data, deletedAt: new Date() };
       }
-      if (params.action === 'deleteMany') {
+
+      if (action === 'deleteMany') {
+        // Guard: proibir deleteMany sem where em modelos com soft delete
+        if (!params.args?.where || Object.keys(params.args.where).length === 0) {
+          throw new Error(
+            `deleteMany sem where em '${params.model}' é proibido — use where explícito ou hardDelete()`,
+          );
+        }
         params.action = 'updateMany';
         params.args.data = { deletedAt: new Date() };
       }
@@ -1787,25 +1800,25 @@ export class AuthService {
   }
 
   async refreshTokens(token: string) {
-    // Valida o token antes de buscar dados do usuário — evita carregar passwordHash em tokens inválidos
-    const stored = await this.prisma.refreshToken.findUnique({ where: { token } });
+    // Revoga atomicamente: UPDATE WHERE revokedAt IS NULL — previne race condition de uso duplo
+    const revoked = await this.prisma.refreshToken.updateMany({
+      where: { token, revokedAt: null, expiresAt: { gt: new Date() } },
+      data: { revokedAt: new Date() },
+    });
 
-    if (!stored || stored.revokedAt) {
-      throw new UnauthorizedException('Refresh token inválido ou revogado');
+    if (revoked.count === 0) {
+      // Token não existe, já foi revogado ou está expirado
+      throw new UnauthorizedException('Refresh token inválido, revogado ou expirado');
     }
-    if (stored.expiresAt < new Date()) {
-      throw new UnauthorizedException('Refresh token expirado — faça login novamente');
-    }
+
+    // Busca o token revogado para obter userId
+    const stored = await this.prisma.refreshToken.findUnique({ where: { token } });
+    if (!stored) throw new UnauthorizedException('Refresh token não encontrado');
 
     const user = await this.prisma.user.findUnique({ where: { id: stored.userId } });
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Usuário inativo');
     }
-
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date() },
-    });
 
     return this.generateTokens({
       id: user.id,
@@ -2927,7 +2940,9 @@ api.interceptors.response.use(
     const refreshToken = localStorage.getItem('refreshToken');
     if (!refreshToken) {
       isRefreshing = false;
-      localStorage.clear();
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
       window.location.href = '/login';
       return Promise.reject(error);
     }
@@ -2946,7 +2961,10 @@ api.interceptors.response.use(
       return api(original);
     } catch (err) {
       processQueue(err, null);
-      localStorage.clear();
+      // Remover apenas as chaves de autenticação — não destruir outros dados do localStorage
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
       window.location.href = '/login';
       return Promise.reject(err);
     } finally {
