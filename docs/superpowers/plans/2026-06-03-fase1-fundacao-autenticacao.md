@@ -1482,12 +1482,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
       }
 
       if (action === 'deleteMany') {
-        // Guard: proibir deleteMany sem where OU com OR/AND vazio (semanticamente "delete all")
+        // Guard: proibir deleteMany sem filtro efetivo em modelos com soft delete
         const where = params.args?.where;
         const isEmpty = !where || Object.keys(where).length === 0;
         const hasEmptyLogical =
-          (Array.isArray(where?.OR) && where.OR.length === 0) ||
-          (Array.isArray(where?.AND) && where.AND.length === 0);
+          // OR/AND vazios ou undefined são semanticamente "sem filtro"
+          (where?.OR !== undefined && (!Array.isArray(where.OR) || where.OR.length === 0)) ||
+          (where?.AND !== undefined && (!Array.isArray(where.AND) || where.AND.length === 0)) ||
+          // NOT:{} é negação de nenhuma condição = match all
+          (where?.NOT !== undefined && typeof where.NOT === 'object' &&
+            !Array.isArray(where.NOT) && Object.keys(where.NOT as object).length === 0);
         if (isEmpty || hasEmptyLogical) {
           throw new Error(
             `deleteMany sem filtro efetivo em '${params.model}' é proibido — use where explícito ou hardDelete()`,
@@ -1832,6 +1836,11 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({ where: { id: stored.userId } });
     if (!user || !user.isActive) {
+      // Revogar todos os tokens do usuário inativo — evita sessões fantasmas
+      await this.prisma.refreshToken.updateMany({
+        where: { userId: stored.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
       throw new UnauthorizedException('Usuário inativo');
     }
 
@@ -2912,6 +2921,7 @@ const isBrowser = typeof window !== 'undefined';
 
 // Centraliza remoção de auth storage — atualizar aqui quando novas chaves forem adicionadas
 function clearAuthStorage() {
+  if (typeof window === 'undefined') return; // guard para SSR/Node — seguro chamar fora do browser
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
