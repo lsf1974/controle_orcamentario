@@ -1448,6 +1448,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
     this.$use(async (params, next) => {
       if (!SOFT_DELETE_MODELS.has(params.model ?? '')) return next(params);
 
+      // Snapshot imutável da action original — usar SEMPRE este para comparações.
+      // params.action pode ser mutado pelos blocos abaixo; nunca comparar params.action
+      // após uma conversão ou o check seguinte pode disparar para a action errada.
       const action = params.action;
 
       // Leitura singular/plural + agregações: injeta deletedAt: null se caller não especificou
@@ -1479,10 +1482,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
       }
 
       if (action === 'deleteMany') {
-        // Guard: proibir deleteMany sem where em modelos com soft delete
-        if (!params.args?.where || Object.keys(params.args.where).length === 0) {
+        // Guard: proibir deleteMany sem where OU com OR/AND vazio (semanticamente "delete all")
+        const where = params.args?.where;
+        const isEmpty = !where || Object.keys(where).length === 0;
+        const hasEmptyLogical =
+          (Array.isArray(where?.OR) && where.OR.length === 0) ||
+          (Array.isArray(where?.AND) && where.AND.length === 0);
+        if (isEmpty || hasEmptyLogical) {
           throw new Error(
-            `deleteMany sem where em '${params.model}' é proibido — use where explícito ou hardDelete()`,
+            `deleteMany sem filtro efetivo em '${params.model}' é proibido — use where explícito ou hardDelete()`,
           );
         }
         params.action = 'updateMany';
@@ -1562,7 +1570,7 @@ const mockPrisma = {
   refreshToken: {
     create: jest.fn(),
     findUnique: jest.fn(),
-    update: jest.fn(),
+    updateMany: jest.fn(),
     deleteMany: jest.fn(),
   },
 };
@@ -1583,7 +1591,7 @@ describe('AuthService', () => {
               if (key === 'jwt.secret') return 'test-secret';
               if (key === 'jwt.refreshSecret') return 'test-refresh-secret';
               if (key === 'jwt.expiresIn') return '15m';
-              if (key === 'jwt.refreshExpiresIn') return '7d';
+              if (key === 'jwt.refreshExpiresInDays') return 7; // número, não string
               return null;
             }),
           },
@@ -1800,20 +1808,27 @@ export class AuthService {
   }
 
   async refreshTokens(token: string) {
-    // Revoga atomicamente: UPDATE WHERE revokedAt IS NULL — previne race condition de uso duplo
+    const now = new Date(); // instante único para filtro e gravação
+
+    // Revoga atomicamente e já seleciona userId — previne race condition de uso duplo
+    // Usa updateMany (atômico no PostgreSQL) + findUnique com select mínimo
     const revoked = await this.prisma.refreshToken.updateMany({
-      where: { token, revokedAt: null, expiresAt: { gt: new Date() } },
-      data: { revokedAt: new Date() },
+      where: { token, revokedAt: null, expiresAt: { gt: now } },
+      data: { revokedAt: now },
     });
 
     if (revoked.count === 0) {
-      // Token não existe, já foi revogado ou está expirado
       throw new UnauthorizedException('Refresh token inválido, revogado ou expirado');
     }
 
-    // Busca o token revogado para obter userId
-    const stored = await this.prisma.refreshToken.findUnique({ where: { token } });
-    if (!stored) throw new UnauthorizedException('Refresh token não encontrado');
+    // Busca apenas userId — token pode ter sido hard-deleted pelo logout concorrente
+    const stored = await this.prisma.refreshToken.findUnique({
+      where: { token },
+      select: { userId: true },
+    });
+    // stored pode ser null se logout() deletou o token entre o updateMany e aqui.
+    // Neste caso a revogação já ocorreu com sucesso — lançamos 401 para forçar novo login.
+    if (!stored) throw new UnauthorizedException('Sessão encerrada — faça login novamente');
 
     const user = await this.prisma.user.findUnique({ where: { id: stored.userId } });
     if (!user || !user.isActive) {
@@ -2895,6 +2910,13 @@ api.interceptors.request.use((config) => {
 // localStorage nem sessão de usuário individual, então rejeitamos 401 diretamente.
 const isBrowser = typeof window !== 'undefined';
 
+// Centraliza remoção de auth storage — atualizar aqui quando novas chaves forem adicionadas
+function clearAuthStorage() {
+  localStorage.removeItem('accessToken');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('user');
+}
+
 // Estado de refresh por processo de browser (SPA client-side apenas)
 let isRefreshing = false;
 let pendingQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = [];
@@ -2940,9 +2962,7 @@ api.interceptors.response.use(
     const refreshToken = localStorage.getItem('refreshToken');
     if (!refreshToken) {
       isRefreshing = false;
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('user');
+      clearAuthStorage();
       window.location.href = '/login';
       return Promise.reject(error);
     }
@@ -2962,9 +2982,7 @@ api.interceptors.response.use(
     } catch (err) {
       processQueue(err, null);
       // Remover apenas as chaves de autenticação — não destruir outros dados do localStorage
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('user');
+      clearAuthStorage();
       window.location.href = '/login';
       return Promise.reject(err);
     } finally {
