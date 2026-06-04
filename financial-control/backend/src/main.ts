@@ -21,18 +21,22 @@ async function bootstrap() {
     credentials: true,
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Financial Control API')
-    .setDescription('Sistema de Controle Financeiro Multi-usuário')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
-
   const port = config.get<number>('app.PORT') ?? 3001;
+
+  const nodeEnv = config.get<string>('app.NODE_ENV');
+  if (nodeEnv !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Financial Control API')
+      .setDescription('Sistema de Controle Financeiro Multi-usuário')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document);
+    console.log(`Swagger em http://localhost:${port}/api/docs`);
+  }
+
   await app.listen(port);
   console.log(`Backend rodando em http://localhost:${port}`);
-  console.log(`Swagger em http://localhost:${port}/api/docs`);
 }
 bootstrap();
