@@ -1,0 +1,619 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── ENUMS ───────────────────────────────────────────────────────────────────
+
+enum SystemRole {
+  ADMIN
+  USER
+}
+
+enum ProjectRole {
+  GESTOR
+  ANALISTA
+}
+
+enum ProjectStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum PersonType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum CategoryType {
+  REVENUE
+  EXPENSE
+}
+
+enum CategoryLevel {
+  PACKAGE
+  CATEGORY
+  SUBCATEGORY
+}
+
+enum BankAccountType {
+  CHECKING
+  SAVINGS
+  INVESTMENT
+  PETTY_CASH
+}
+
+enum CardBrand {
+  VISA
+  MASTERCARD
+  ELO
+  AMEX
+  HIPERCARD
+  OTHER
+}
+
+enum BudgetStatus {
+  DRAFT
+  SUBMITTED
+  ACTIVE
+  CLOSED
+}
+
+enum DistributionType {
+  SINGLE
+  EQUAL
+  MANUAL
+  RECURRING
+}
+
+enum TransactionType {
+  EXPENSE
+  REVENUE
+}
+
+enum TransactionStatus {
+  PLANNED
+  PAID
+  RECEIVED
+  CANCELLED
+  OVERDUE
+  PENDING_APPROVAL
+}
+
+enum TransactionSource {
+  WEB
+  TELEGRAM
+  WHATSAPP
+  IMPORT
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum StatementFormat {
+  OFX
+  CSV
+  CNAB240
+  API
+}
+
+enum ReconciliationStatus {
+  PENDING
+  AUTO_MATCHED
+  SUGGESTED
+  MANUALLY_MATCHED
+  IGNORED
+}
+
+enum NotificationChannel {
+  TELEGRAM
+  WHATSAPP
+  EMAIL
+}
+
+// ─── USUÁRIOS E ACESSO ───────────────────────────────────────────────────────
+
+model User {
+  id               String     @id @default(cuid())
+  name             String
+  email            String     @unique
+  passwordHash     String
+  systemRole       SystemRole @default(USER)
+  telegramId       String?    @unique
+  telegramUsername String?
+  whatsappPhone    String?
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean    @default(false)
+  isActive         Boolean    @default(true)
+  lastLoginAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  deletedAt        DateTime?
+
+  projectUsers   ProjectUser[]
+  transactions   Transaction[]
+  notifications  NotificationConfig[]
+  auditLogs      AuditLog[]
+  linkingTokens  TelegramLinkToken[]
+  refreshTokens  RefreshToken[]
+  passwordResets PasswordResetToken[]
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  token      String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  deviceInfo String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model TelegramLinkToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// ─── PROJETOS ────────────────────────────────────────────────────────────────
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  startDate   DateTime
+  endDate     DateTime?
+  status      ProjectStatus @default(ACTIVE)
+  color       String?
+  icon        String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  projectUsers    ProjectUser[]
+  projectAccounts ProjectBankAccount[]
+  projectCards    ProjectCreditCard[]
+  budgets         Budget[]
+  transactions    Transaction[]
+  costCenters     CostCenter[]
+  chartOfAccounts AccountCategory[]
+  projectClients  ProjectClient[]
+}
+
+model ProjectUser {
+  id        String      @id @default(cuid())
+  projectId String
+  userId    String
+  role      ProjectRole @default(ANALISTA)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([projectId, userId])
+}
+
+// ─── CLIENTES ────────────────────────────────────────────────────────────────
+
+model Client {
+  id                String           @id @default(cuid())
+  personType        PersonType
+  companyName       String?
+  tradeName         String?
+  fullName          String?
+  taxId             String           @unique
+  stateRegistration String?
+  email             String?
+  emailSecondary    String?
+  phone             String?
+  mobile            String?
+  website           String?
+  street            String?
+  streetNumber      String?
+  complement        String?
+  neighborhood      String?
+  city              String?
+  state             String?
+  zipCode           String?
+  paymentTermDays   Int?
+  creditLimit       Decimal?
+  pixKey            String?
+  bankName          String?
+  bankAgency        String?
+  bankAccount       String?
+  bankAccountType   BankAccountType?
+  responsibleUserId String?
+  notes             String?
+  isClient          Boolean          @default(true)
+  isSupplier        Boolean          @default(false)
+  isActive          Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  deletedAt         DateTime?
+
+  projectClients ProjectClient[]
+  transactions   Transaction[]
+  budgetLines    BudgetLine[]
+}
+
+model ProjectClient {
+  id        String   @id @default(cuid())
+  projectId String
+  clientId  String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  client  Client  @relation(fields: [clientId], references: [id])
+
+  @@unique([projectId, clientId])
+}
+
+// ─── FORNECEDORES ────────────────────────────────────────────────────────────
+
+model Supplier {
+  id              String           @id @default(cuid())
+  personType      PersonType
+  companyName     String?
+  tradeName       String?
+  fullName        String?
+  taxId           String           @unique
+  email           String?
+  phone           String?
+  mobile          String?
+  pixKey          String?
+  bankName        String?
+  bankAgency      String?
+  bankAccount     String?
+  bankAccountType BankAccountType?
+  paymentTermDays Int?
+  notes           String?
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?
+
+  transactions Transaction[]
+  budgetLines  BudgetLine[]
+}
+
+// ─── PLANO DE CONTAS ─────────────────────────────────────────────────────────
+
+model AccountCategory {
+  id          String        @id @default(cuid())
+  projectId   String
+  parentId    String?
+  code        String
+  name        String
+  type        CategoryType
+  level       CategoryLevel
+  description String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  project      Project           @relation(fields: [projectId], references: [id])
+  parent       AccountCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children     AccountCategory[] @relation("CategoryHierarchy")
+  budgetLines  BudgetLine[]
+  transactions Transaction[]
+
+  @@unique([projectId, code])
+}
+
+// ─── CONTAS BANCÁRIAS E CARTÕES ──────────────────────────────────────────────
+
+model BankAccount {
+  id             String          @id @default(cuid())
+  name           String
+  bankName       String
+  bankCode       String?
+  agency         String?
+  accountNumber  String?
+  accountType    BankAccountType
+  initialBalance Decimal         @default(0)
+  initialDate    DateTime
+  openFinanceId  String?
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  deletedAt      DateTime?
+
+  projectAccounts ProjectBankAccount[]
+  transactions    Transaction[]
+  statements      BankStatement[]
+}
+
+model ProjectBankAccount {
+  id            String   @id @default(cuid())
+  projectId     String
+  bankAccountId String
+  createdAt     DateTime @default(now())
+
+  project     Project     @relation(fields: [projectId], references: [id])
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id])
+
+  @@unique([projectId, bankAccountId])
+}
+
+model CreditCard {
+  id               String    @id @default(cuid())
+  name             String
+  brand            CardBrand
+  lastFourDigits   String
+  creditLimit      Decimal
+  billingDay       Int
+  closingDay       Int
+  paymentAccountId String?
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  projectCards ProjectCreditCard[]
+  transactions Transaction[]
+}
+
+model ProjectCreditCard {
+  id           String   @id @default(cuid())
+  projectId    String
+  creditCardId String
+  createdAt    DateTime @default(now())
+
+  project    Project    @relation(fields: [projectId], references: [id])
+  creditCard CreditCard @relation(fields: [creditCardId], references: [id])
+
+  @@unique([projectId, creditCardId])
+}
+
+// ─── CENTROS DE CUSTO ────────────────────────────────────────────────────────
+
+model CostCenter {
+  id          String    @id @default(cuid())
+  projectId   String
+  code        String
+  name        String
+  description String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  project      Project       @relation(fields: [projectId], references: [id])
+  transactions Transaction[]
+  budgetLines  BudgetLine[]
+
+  @@unique([projectId, code])
+}
+
+// ─── ORÇAMENTOS ──────────────────────────────────────────────────────────────
+
+model Budget {
+  id           String       @id @default(cuid())
+  projectId    String
+  name         String
+  description  String?
+  version      Int          @default(1)
+  status       BudgetStatus @default(DRAFT)
+  startDate    DateTime
+  endDate      DateTime
+  isActive     Boolean      @default(false)
+  approvedBy   String?
+  approvedAt   DateTime?
+  approvalNote String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  project Project      @relation(fields: [projectId], references: [id])
+  lines   BudgetLine[]
+}
+
+model BudgetLine {
+  id               String           @id @default(cuid())
+  budgetId         String
+  categoryId       String
+  costCenterId     String?
+  clientId         String?
+  supplierId       String?
+  totalAmount      Decimal
+  distributionType DistributionType
+  startDate        DateTime
+  endDate          DateTime?
+  recurrenceMonths Int?
+  notes            String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  budget        Budget               @relation(fields: [budgetId], references: [id])
+  category      AccountCategory      @relation(fields: [categoryId], references: [id])
+  costCenter    CostCenter?          @relation(fields: [costCenterId], references: [id])
+  client        Client?              @relation(fields: [clientId], references: [id])
+  supplier      Supplier?            @relation(fields: [supplierId], references: [id])
+  monthlyValues BudgetMonthlyValue[]
+}
+
+model BudgetMonthlyValue {
+  id           String  @id @default(cuid())
+  budgetLineId String
+  month        Int
+  year         Int
+  amount       Decimal
+
+  budgetLine BudgetLine @relation(fields: [budgetLineId], references: [id])
+
+  @@unique([budgetLineId, month, year])
+}
+
+// ─── LANÇAMENTOS ─────────────────────────────────────────────────────────────
+
+model Transaction {
+  id               String            @id @default(cuid())
+  projectId        String
+  categoryId       String
+  costCenterId     String?
+  bankAccountId    String?
+  creditCardId     String?
+  clientId         String?
+  supplierId       String?
+  createdByUserId  String
+  type             TransactionType
+  amount           Decimal
+  description      String?
+  documentNumber   String?
+  competenceDate   DateTime
+  dueDate          DateTime
+  paymentDate      DateTime?
+  status           TransactionStatus @default(PLANNED)
+  approvalStatus   ApprovalStatus    @default(PENDING)
+  approvedByUserId String?
+  approvalNote     String?
+  source           TransactionSource @default(WEB)
+  isRecurring      Boolean           @default(false)
+  recurringGroupId String?
+  reconciledItemId String?
+  notes            String?
+  tags             String[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  project     Project                 @relation(fields: [projectId], references: [id])
+  category    AccountCategory         @relation(fields: [categoryId], references: [id])
+  costCenter  CostCenter?             @relation(fields: [costCenterId], references: [id])
+  bankAccount BankAccount?            @relation(fields: [bankAccountId], references: [id])
+  creditCard  CreditCard?             @relation(fields: [creditCardId], references: [id])
+  client      Client?                 @relation(fields: [clientId], references: [id])
+  supplier    Supplier?               @relation(fields: [supplierId], references: [id])
+  createdBy   User                    @relation(fields: [createdByUserId], references: [id])
+  attachments TransactionAttachment[]
+  splits      TransactionSplit[]
+}
+
+model TransactionAttachment {
+  id            String   @id @default(cuid())
+  transactionId String
+  fileName      String
+  fileUrl       String
+  fileType      String
+  fileSize      Int
+  uploadedAt    DateTime @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+}
+
+model TransactionSplit {
+  id            String  @id @default(cuid())
+  transactionId String
+  projectId     String
+  costCenterId  String?
+  percentage    Decimal
+  amount        Decimal
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+}
+
+// ─── EXTRATOS E CONCILIAÇÃO ──────────────────────────────────────────────────
+
+model BankStatement {
+  id              String          @id @default(cuid())
+  bankAccountId   String
+  importedBy      String
+  importDate      DateTime        @default(now())
+  startDate       DateTime
+  endDate         DateTime
+  format          StatementFormat
+  totalItems      Int             @default(0)
+  reconciledItems Int             @default(0)
+
+  bankAccount BankAccount         @relation(fields: [bankAccountId], references: [id])
+  items       BankStatementItem[]
+}
+
+model BankStatementItem {
+  id                   String               @id @default(cuid())
+  statementId          String
+  date                 DateTime
+  amount               Decimal
+  description          String
+  type                 String
+  externalId           String?
+  reconciliationStatus ReconciliationStatus @default(PENDING)
+  transactionId        String?
+  ignoredReason        String?
+  reconciledAt         DateTime?
+  reconciledBy         String?
+
+  statement BankStatement @relation(fields: [statementId], references: [id])
+}
+
+// ─── NOTIFICAÇÕES ────────────────────────────────────────────────────────────
+
+model NotificationConfig {
+  id                    String              @id @default(cuid())
+  userId                String
+  channel               NotificationChannel
+  isActive              Boolean             @default(true)
+  alertDueToday         Boolean             @default(true)
+  alertDueTodayTime     String              @default("08:00")
+  alertDueInDays        Int?
+  alertOverdue          Boolean             @default(true)
+  alertLowBalance       Boolean             @default(false)
+  alertLowBalanceAmount Decimal?
+  alertPendingApproval  Boolean             @default(true)
+  alertDailySummary     Boolean             @default(false)
+  alertDailySummaryTime String              @default("08:00")
+  alertWeeklySummary    Boolean             @default(false)
+  alertWeeklyDay        Int?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, channel])
+}
+
+// ─── AUDITORIA ───────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String
+  oldValues Json?
+  newValues Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
