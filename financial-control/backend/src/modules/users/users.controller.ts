@@ -9,6 +9,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
@@ -18,6 +19,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequiresRole } from '../../common/decorators/requires-role.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -35,7 +37,13 @@ export class UsersController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Buscar usuário por ID' })
-  findOne(@Param('id') id: string) {
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: { id: string; systemRole: SystemRole },
+  ) {
+    if (currentUser.id !== id && currentUser.systemRole !== SystemRole.ADMIN) {
+      throw new ForbiddenException('Acesso negado');
+    }
     return this.usersService.findOne(id);
   }
 
@@ -48,8 +56,12 @@ export class UsersController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Atualizar usuário' })
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() currentUser: { id: string; systemRole: SystemRole },
+  ) {
+    return this.usersService.update(id, dto, currentUser);
   }
 
   @Delete(':id')

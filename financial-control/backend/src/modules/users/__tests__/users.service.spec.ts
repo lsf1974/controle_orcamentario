@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UsersService } from '../users.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { SystemRole } from '@prisma/client';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 
 const mockPrisma = {
   user: {

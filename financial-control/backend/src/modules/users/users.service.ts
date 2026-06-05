@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { SystemRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const USER_SELECT = {
@@ -41,7 +43,7 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto) {
-    const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const exists = await this.prisma.user.findFirst({ where: { email: dto.email, deletedAt: null } });
     if (exists) throw new ConflictException('E-mail já cadastrado');
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
@@ -56,7 +58,23 @@ export class UsersService {
     });
   }
 
-  async update(id: string, dto: UpdateUserDto) {
+  async update(
+    id: string,
+    dto: UpdateUserDto,
+    requestingUser: { id: string; systemRole: SystemRole },
+  ) {
+    if (
+      requestingUser.id !== id &&
+      requestingUser.systemRole !== SystemRole.ADMIN
+    ) {
+      throw new ForbiddenException('Acesso negado');
+    }
+    if (
+      dto.systemRole !== undefined &&
+      requestingUser.systemRole !== SystemRole.ADMIN
+    ) {
+      throw new ForbiddenException('Apenas admin pode alterar o perfil de sistema');
+    }
     await this.findOne(id);
     const data: Record<string, unknown> = { ...dto };
     if (dto.password) {
