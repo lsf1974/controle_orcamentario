@@ -13,6 +13,8 @@ import { randomBytes } from 'crypto';
 
 @Injectable()
 export class AuthService {
+  private static readonly DUMMY_HASH = '$2b$12$dummyhashtopreventtimingattacks1234567890123456';
+
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
@@ -20,8 +22,8 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const exists = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const exists = await this.prisma.user.findFirst({
+      where: { email: dto.email, deletedAt: null },
     });
     if (exists) throw new ConflictException('E-mail já cadastrado');
 
@@ -35,16 +37,16 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const user = await this.prisma.user.findFirst({
+      where: { email: dto.email, deletedAt: null },
     });
 
-    if (!user || !user.isActive) {
+    const hash = user?.isActive ? user.passwordHash : AuthService.DUMMY_HASH;
+    const valid = await bcrypt.compare(dto.password, hash);
+
+    if (!user || !user.isActive || !valid) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
-
-    const valid = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!valid) throw new UnauthorizedException('Credenciais inválidas');
 
     await this.prisma.user.update({
       where: { id: user.id },
@@ -68,6 +70,18 @@ export class AuthService {
     });
 
     if (revoked.count === 0) {
+      // Detectar se é reuso de token revogado (possível roubo de sessão)
+      const reused = await this.prisma.refreshToken.findUnique({
+        where: { token },
+        select: { userId: true, revokedAt: true },
+      });
+      if (reused?.revokedAt) {
+        // Token já revogado sendo reusado — possível roubo. Revogar toda a chain.
+        await this.prisma.refreshToken.updateMany({
+          where: { userId: reused.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
       throw new UnauthorizedException('Refresh token inválido, revogado ou expirado');
     }
 
