@@ -62,6 +62,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
           );
         }
         params.action = 'updateMany';
+        params.args.where = { ...params.args.where, deletedAt: null };
         params.args.data = { deletedAt: new Date() };
       }
 

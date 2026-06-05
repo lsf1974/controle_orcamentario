@@ -39,6 +39,13 @@ export class ProjectAccessGuard implements CanActivate {
 
     if (!projectUser) return false;
 
+    // Verificar que o projeto não foi soft-deletado
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!project) return false;
+
     if (!requiredRoles) return true;
 
     const roleHierarchy: Record<ProjectRole, number> = {
