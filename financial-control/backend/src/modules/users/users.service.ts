@@ -76,11 +76,10 @@ export class UsersService {
       throw new ForbiddenException('Apenas admin pode alterar o perfil de sistema');
     }
     await this.findOne(id);
-    const data: Record<string, unknown> = { ...dto };
-    if (dto.password) {
-      data.passwordHash = await bcrypt.hash(dto.password, 12);
-      delete data.password;
-    }
+    const data: Record<string, unknown> = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.systemRole !== undefined) data.systemRole = dto.systemRole;
+    if (dto.password) data.passwordHash = await bcrypt.hash(dto.password, 12);
     return this.prisma.user.update({ where: { id }, data, select: USER_SELECT });
   }
 
