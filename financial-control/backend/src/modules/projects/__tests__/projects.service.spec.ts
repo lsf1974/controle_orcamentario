@@ -17,6 +17,9 @@ const mockPrisma = {
     delete: jest.fn(),
     findMany: jest.fn(),
   },
+  user: {
+    findFirst: jest.fn(),
+  },
 };
 
 describe('ProjectsService', () => {
@@ -56,7 +59,11 @@ describe('ProjectsService', () => {
   });
 
   it('should assign user to project', async () => {
-    mockPrisma.project.findUnique.mockResolvedValue({ id: 'proj-1' });
+    mockPrisma.project.findUnique.mockResolvedValue({
+      id: 'proj-1',
+      projectUsers: [],
+    });
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
     mockPrisma.projectUser.findUnique.mockResolvedValue(null);
     mockPrisma.projectUser.create.mockResolvedValue({
       projectId: 'proj-1',
@@ -72,8 +79,24 @@ describe('ProjectsService', () => {
     expect(result.role).toBe(ProjectRole.ANALISTA);
   });
 
+  it('should throw NotFoundException if user does not exist when assigning', async () => {
+    mockPrisma.project.findUnique.mockResolvedValue({
+      id: 'proj-1',
+      projectUsers: [],
+    });
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.assignUser('proj-1', { userId: 'ghost-user', role: ProjectRole.ANALISTA }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
   it('should throw ConflictException if user already in project', async () => {
-    mockPrisma.project.findUnique.mockResolvedValue({ id: 'proj-1' });
+    mockPrisma.project.findUnique.mockResolvedValue({
+      id: 'proj-1',
+      projectUsers: [],
+    });
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
     mockPrisma.projectUser.findUnique.mockResolvedValue({
       projectId: 'proj-1',
       userId: 'user-1',

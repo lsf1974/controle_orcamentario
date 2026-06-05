@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, MinLength } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDate, MinLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -16,11 +16,13 @@ export class CreateProjectDto {
 
   @ApiProperty({ example: '2026-01-01' })
   @Type(() => Date)
+  @IsDate()
   startDate: Date;
 
   @ApiPropertyOptional({ example: '2026-12-31' })
   @IsOptional()
   @Type(() => Date)
+  @IsDate()
   endDate?: Date;
 
   @ApiPropertyOptional({ enum: ProjectStatus })

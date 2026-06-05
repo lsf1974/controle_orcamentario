@@ -36,8 +36,11 @@ export class ProjectsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Detalhe do projeto' })
-  findOne(@Param('id') id: string) {
-    return this.projectsService.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; systemRole: SystemRole },
+  ) {
+    return this.projectsService.findOne(id, user);
   }
 
   @Post()
@@ -49,7 +52,9 @@ export class ProjectsController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Atualizar projeto' })
+  @UseGuards(RolesGuard)
+  @RequiresRole(SystemRole.ADMIN)
+  @ApiOperation({ summary: 'Atualizar projeto (Admin)' })
   update(@Param('id') id: string, @Body() dto: UpdateProjectDto) {
     return this.projectsService.update(id, dto);
   }

@@ -2,12 +2,13 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { AssignUserDto } from './dto/assign-user.dto';
-import { SystemRole } from '@prisma/client';
+import { ProjectStatus, SystemRole } from '@prisma/client';
 
 @Injectable()
 export class ProjectsService {
@@ -29,7 +30,10 @@ export class ProjectsService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(
+    id: string,
+    requestingUser?: { id: string; systemRole: SystemRole },
+  ) {
     const project = await this.prisma.project.findUnique({
       where: { id, deletedAt: null },
       include: {
@@ -39,6 +43,19 @@ export class ProjectsService {
       },
     });
     if (!project) throw new NotFoundException(`Projeto ${id} não encontrado`);
+
+    if (
+      requestingUser &&
+      requestingUser.systemRole !== SystemRole.ADMIN
+    ) {
+      const isMember = project.projectUsers.some(
+        (pu) => pu.userId === requestingUser.id,
+      );
+      if (!isMember) {
+        throw new ForbiddenException('Acesso negado ao projeto');
+      }
+    }
+
     return project;
   }
 
@@ -55,12 +72,18 @@ export class ProjectsService {
     await this.findOne(id);
     await this.prisma.project.update({
       where: { id },
-      data: { deletedAt: new Date(), status: 'CLOSED' },
+      data: { deletedAt: new Date(), status: ProjectStatus.CLOSED },
     });
   }
 
   async assignUser(projectId: string, dto: AssignUserDto) {
     await this.findOne(projectId);
+
+    const userExists = await this.prisma.user.findFirst({
+      where: { id: dto.userId, deletedAt: null },
+    });
+    if (!userExists)
+      throw new NotFoundException(`Usuário ${dto.userId} não encontrado`);
 
     const existing = await this.prisma.projectUser.findUnique({
       where: { projectId_userId: { projectId, userId: dto.userId } },
