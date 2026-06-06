@@ -32,8 +32,13 @@ export default function LoginPage() {
     try {
       await login(data.email, data.password);
       router.push('/dashboard');
-    } catch {
-      setError('E-mail ou senha inválidos. Tente novamente.');
+    } catch (err: unknown) {
+      const isAuthError = (err as { response?: { status?: number } })?.response?.status === 401;
+      setError(
+        isAuthError
+          ? 'E-mail ou senha inválidos. Tente novamente.'
+          : 'Erro de conexão. Verifique sua internet e tente novamente.'
+      );
     }
   }
 

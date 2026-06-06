@@ -1,15 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getCurrentUser } from '@/lib/auth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<{ name: string; systemRole: string } | null>(null);
-
-  useEffect(() => {
-    setUser(getCurrentUser());
-  }, []);
+  const { user } = usePermissions();
 
   return (
     <div className="space-y-6">

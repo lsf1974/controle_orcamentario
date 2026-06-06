@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { isAuthenticated } from '@/lib/auth';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -27,13 +28,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             { href: '/fornecedores', label: 'Fornecedores' },
             { href: '/configuracoes', label: 'Configurações' },
           ].map((item) => (
-            <a
+            <Link
               key={item.href}
               href={item.href}
               className="block px-3 py-2 rounded-md text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900"
             >
               {item.label}
-            </a>
+            </Link>
           ))}
         </nav>
       </aside>
