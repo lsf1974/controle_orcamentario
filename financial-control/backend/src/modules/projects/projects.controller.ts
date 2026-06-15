@@ -18,6 +18,7 @@ import { UpdateProjectDto } from './dto/update-project.dto';
 import { AssignUserDto } from './dto/assign-user.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ProjectAccessGuard } from '../../common/guards/project-access.guard';
 import { RequiresRole } from '../../common/decorators/requires-role.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -34,10 +35,11 @@ export class ProjectsController {
     return this.projectsService.findAll(user.id, user.systemRole);
   }
 
-  @Get(':id')
+  @Get(':projectId')
+  @UseGuards(ProjectAccessGuard)
   @ApiOperation({ summary: 'Detalhe do projeto' })
   findOne(
-    @Param('id') id: string,
+    @Param('projectId') id: string,
     @CurrentUser() user: { id: string; systemRole: SystemRole },
   ) {
     return this.projectsService.findOne(id, user);

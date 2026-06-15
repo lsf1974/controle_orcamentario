@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { PrismaClient, SystemRole } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcrypt';
+import { BCRYPT_ROUNDS } from '../src/common/constants';
 
 const connectionString = process.env.DATABASE_URL!;
 const adapter = new PrismaPg({ connectionString });
@@ -15,7 +16,7 @@ async function main() {
     return;
   }
 
-  const passwordHash = await bcrypt.hash('Admin@123456', 12);
+  const passwordHash = await bcrypt.hash('Admin@123456', BCRYPT_ROUNDS);
   const admin = await prisma.user.create({
     data: {
       name: 'Administrador',

@@ -3,6 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -28,8 +29,7 @@ export class ProjectAccessGuard implements CanActivate {
     if (!user) return false;
     if (user.systemRole === SystemRole.ADMIN) return true;
 
-    const projectId =
-      request.params?.projectId ?? request.body?.projectId;
+    const projectId = request.params?.projectId ?? request.body?.projectId;
 
     if (!projectId) return false;
 
@@ -46,7 +46,7 @@ export class ProjectAccessGuard implements CanActivate {
     });
     if (!project) return false;
 
-    if (!requiredRoles) return true;
+    if (!requiredRoles || requiredRoles.length === 0) return true;
 
     const roleHierarchy: Record<ProjectRole, number> = {
       [ProjectRole.GESTOR]: 2,
@@ -57,6 +57,10 @@ export class ProjectAccessGuard implements CanActivate {
     const minRequired = Math.min(
       ...requiredRoles.map((r) => roleHierarchy[r] ?? 99),
     );
+
+    if (minRequired === 99) {
+      throw new InternalServerErrorException('Perfil de projeto requerido inválido — configuração interna incorreta');
+    }
 
     if (userLevel < minRequired) {
       throw new ForbiddenException(

@@ -10,6 +10,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
+import { BCRYPT_ROUNDS } from '../../common/constants';
 
 @Injectable()
 export class AuthService {
@@ -27,7 +28,7 @@ export class AuthService {
     });
     if (exists) throw new ConflictException('E-mail já cadastrado');
 
-    const passwordHash = await bcrypt.hash(dto.password, 12);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const user = await this.prisma.user.create({
       data: { name: dto.name, email: dto.email, passwordHash },
       select: { id: true, name: true, email: true, systemRole: true },
@@ -62,42 +63,56 @@ export class AuthService {
   }
 
   async refreshTokens(token: string) {
-    const now = new Date();
-
-    const revoked = await this.prisma.refreshToken.updateMany({
-      where: { token, revokedAt: null, expiresAt: { gt: now } },
-      data: { revokedAt: now },
+    const stored = await this.prisma.refreshToken.findUnique({
+      where: { token },
+      select: { userId: true, revokedAt: true, expiresAt: true },
     });
 
-    if (revoked.count === 0) {
-      // Detectar se é reuso de token revogado (possível roubo de sessão)
-      const reused = await this.prisma.refreshToken.findUnique({
-        where: { token },
-        select: { userId: true, revokedAt: true },
-      });
-      if (reused?.revokedAt) {
-        // Token já revogado sendo reusado — possível roubo. Revogar toda a chain.
+    if (!stored) {
+      throw new UnauthorizedException('Refresh token inválido, revogado ou expirado');
+    }
+
+    const now = new Date();
+
+    // Token expirado — marcar como revogado para ativar theft detection em tentativas futuras
+    if (stored.expiresAt <= now) {
+      if (!stored.revokedAt) {
         await this.prisma.refreshToken.updateMany({
-          where: { userId: reused.userId, revokedAt: null },
-          data: { revokedAt: new Date() },
+          where: { token, revokedAt: null },
+          data: { revokedAt: now },
         });
       }
       throw new UnauthorizedException('Refresh token inválido, revogado ou expirado');
     }
 
-    const stored = await this.prisma.refreshToken.findUnique({
-      where: { token },
-      select: { userId: true },
-    });
-    if (!stored) throw new UnauthorizedException('Sessão encerrada — faça login novamente');
+    // Token revogado — possível roubo de sessão, revogar toda a chain
+    if (stored.revokedAt) {
+      await this.prisma.refreshToken.updateMany({
+        where: { userId: stored.userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      throw new UnauthorizedException('Refresh token inválido, revogado ou expirado');
+    }
 
+    // Verificar usuário ANTES de revogar — evita queimar token de usuário inativo sem emitir novo
     const user = await this.prisma.user.findUnique({ where: { id: stored.userId } });
     if (!user || !user.isActive) {
       await this.prisma.refreshToken.updateMany({
         where: { userId: stored.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
+        data: { revokedAt: now },
       });
       throw new UnauthorizedException('Usuário inativo');
+    }
+
+    // Revogar atomicamente — count=0 indica race condition (outro request ganhou primeiro)
+    // Nota: dois requests simultâneos com o mesmo token válido resultam num 401 para o segundo.
+    // Isso é o comportamento correto para prevenir replay, mas clientes devem implementar retry.
+    const revoked = await this.prisma.refreshToken.updateMany({
+      where: { token, revokedAt: null, expiresAt: { gt: now } },
+      data: { revokedAt: now },
+    });
+    if (revoked.count === 0) {
+      throw new UnauthorizedException('Refresh token inválido, revogado ou expirado');
     }
 
     return this.generateTokens({
@@ -109,7 +124,11 @@ export class AuthService {
   }
 
   async logout(userId: string) {
-    await this.prisma.refreshToken.deleteMany({ where: { userId } });
+    // Soft-revoke: preserva os registros para theft detection (roubo após logout)
+    await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
   private async generateTokens(user: {
@@ -129,6 +148,17 @@ export class AuthService {
     const days = this.config.get<number>('jwt.refreshExpiresInDays') ?? 7;
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + days);
+
+    // Limpar tokens antigos (revogados e expirados) para evitar crescimento ilimitado da tabela
+    await this.prisma.refreshToken.deleteMany({
+      where: {
+        userId: user.id,
+        OR: [
+          { revokedAt: { not: null } },
+          { expiresAt: { lt: new Date() } },
+        ],
+      },
+    });
 
     await this.prisma.refreshToken.create({
       data: { userId: user.id, token: refreshTokenValue, expiresAt },

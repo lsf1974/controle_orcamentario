@@ -55,7 +55,7 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Atualizar usuário' })
+  @ApiOperation({ summary: 'Atualizar usuário (próprio ou Admin)' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateUserDto,
