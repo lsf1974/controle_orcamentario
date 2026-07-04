@@ -4,6 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const mockPrisma = {
@@ -77,6 +78,22 @@ describe('AuthService', () => {
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
       expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw ConflictException if email belongs to a soft-deleted user (DB unique constraint)', async () => {
+      // findFirst filtra deletedAt: null e não acha nada, mas o create() colide
+      // com a constraint única do banco pois o registro soft-deletado ainda existe.
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.user.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`email`)', {
+          code: 'P2002',
+          clientVersion: '7.8.0',
+        }),
+      );
+
+      await expect(
+        service.register({ name: 'Test', email: 'a@b.com', password: 'Pass@123' }),
+      ).rejects.toThrow(ConflictException);
     });
   });
 

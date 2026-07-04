@@ -59,7 +59,7 @@ function softDeleteModelMethods(modelName: string) {
         );
       }
       return context.updateMany({
-        where,
+        where: { ...where, deletedAt: null },
         data: { deletedAt: new Date() },
       });
     },

@@ -10,6 +10,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { BCRYPT_ROUNDS } from '../../common/constants';
 
 @Injectable()
@@ -29,10 +30,21 @@ export class AuthService {
     if (exists) throw new ConflictException('E-mail já cadastrado');
 
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-    const user = await this.prisma.user.create({
-      data: { name: dto.name, email: dto.email, passwordHash },
-      select: { id: true, name: true, email: true, systemRole: true },
-    });
+    let user;
+    try {
+      user = await this.prisma.user.create({
+        data: { name: dto.name, email: dto.email, passwordHash },
+        select: { id: true, name: true, email: true, systemRole: true },
+      });
+    } catch (error) {
+      // E-mail de um usuário soft-deletado ainda ocupa a constraint única do banco —
+      // o findFirst acima não pega esse caso (filtra deletedAt: null), então o conflito
+      // só aparece aqui.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('E-mail já cadastrado');
+      }
+      throw error;
+    }
 
     return this.generateTokens(user);
   }

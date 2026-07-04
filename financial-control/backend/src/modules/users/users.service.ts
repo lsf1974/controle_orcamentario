@@ -49,15 +49,25 @@ export class UsersService {
     if (exists) throw new ConflictException('E-mail já cadastrado');
 
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-    return this.prisma.user.create({
-      data: {
-        name: dto.name,
-        email: dto.email,
-        passwordHash,
-        systemRole: dto.systemRole,
-      },
-      select: USER_SELECT,
-    });
+    try {
+      return await this.prisma.user.create({
+        data: {
+          name: dto.name,
+          email: dto.email,
+          passwordHash,
+          systemRole: dto.systemRole,
+        },
+        select: USER_SELECT,
+      });
+    } catch (error) {
+      // E-mail de um usuário soft-deletado ainda ocupa a constraint única do banco —
+      // o findFirst acima não pega esse caso (filtra deletedAt: null), então o conflito
+      // só aparece aqui.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('E-mail já cadastrado');
+      }
+      throw error;
+    }
   }
 
   async update(
@@ -77,12 +87,42 @@ export class UsersService {
     ) {
       throw new ForbiddenException('Apenas admin pode alterar o perfil de sistema');
     }
-    await this.findOne(id);
+
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.systemRole !== undefined) data.systemRole = dto.systemRole;
     if (dto.password) data.passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-    return this.prisma.user.update({ where: { id }, data, select: USER_SELECT });
+
+    if (dto.systemRole === undefined) {
+      await this.findOne(id);
+      return this.prisma.user.update({ where: { id }, data, select: USER_SELECT });
+    }
+
+    // Troca de systemRole passa por transação serializável: mesma proteção de remove()
+    // contra rebaixar o último admin do sistema (inclusive auto-rebaixamento).
+    return this.prisma.$transaction(
+      async (tx) => {
+        const current = await tx.user.findUnique({
+          where: { id, deletedAt: null },
+          select: { systemRole: true },
+        });
+        if (!current) throw new NotFoundException(`Usuário ${id} não encontrado`);
+
+        if (current.systemRole === SystemRole.ADMIN && dto.systemRole !== SystemRole.ADMIN) {
+          const remainingAdmins = await tx.user.count({
+            where: { systemRole: SystemRole.ADMIN, deletedAt: null, id: { not: id } },
+          });
+          if (remainingAdmins === 0) {
+            throw new BadRequestException(
+              'Não é possível remover o perfil de administrador do único administrador do sistema',
+            );
+          }
+        }
+
+        return tx.user.update({ where: { id }, data, select: USER_SELECT });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async remove(id: string) {
