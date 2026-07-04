@@ -1,9 +1,18 @@
 import { Global, Module } from '@nestjs/common';
-import { PrismaService } from './prisma.service';
+import { createPrismaClient, PrismaService } from './prisma.service';
 
 @Global()
 @Module({
-  providers: [PrismaService],
+  providers: [
+    {
+      provide: PrismaService,
+      useFactory: async () => {
+        const prisma = createPrismaClient();
+        await prisma.$connect();
+        return prisma;
+      },
+    },
+  ],
   exports: [PrismaService],
 })
 export class PrismaModule {}
