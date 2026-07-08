@@ -35,7 +35,7 @@ Todas as entidades já existem no schema (`backend/prisma/schema.prisma`). Não 
 | Ação | Admin | Gestor (do projeto) | Analista |
 |---|:---:|:---:|:---:|
 | CRUD do cadastro mestre (Client/Supplier/BankAccount/CreditCard) | ✅ | ❌ | ❌ |
-| Listar cadastro mestre global | ✅ | ❌ (só vê os associados ao seu projeto) | ❌ |
+| Listar cadastro mestre global (somente leitura) | ✅ | ✅ | ✅ |
 | Associar/desassociar Client/BankAccount/CreditCard a um projeto | ✅ | ✅ (apenas no(s) projeto(s) onde é Gestor) | ❌ |
 | Listar entidades associadas ao projeto (Client/BankAccount/CreditCard/Supplier) | ✅ | ✅ | ✅ (leitura) |
 | CRUD de `AccountCategory` / `CostCenter` do projeto | ✅ | ✅ (apenas no(s) projeto(s) onde é Gestor) | ❌ |
@@ -55,7 +55,8 @@ Todas as entidades já existem no schema (`backend/prisma/schema.prisma`). Não 
 - `POST /suppliers`, `PATCH /suppliers/:id`, `DELETE /suppliers/:id` — `RequiresRole(ADMIN)`
 
 ### 4.2 `clients`
-- `GET /clients`, `GET /clients/:id`, `POST /clients`, `PATCH /clients/:id`, `DELETE /clients/:id` — `RequiresRole(ADMIN)`
+- `GET /clients`, `GET /clients/:id` — qualquer usuário autenticado (leitura; necessária para o Gestor escolher o que associar ao seu projeto)
+- `POST /clients`, `PATCH /clients/:id`, `DELETE /clients/:id` — `RequiresRole(ADMIN)`
 - `GET /projects/:projectId/clients` — `ProjectAccessGuard` (qualquer role do projeto)
 - `POST /projects/:projectId/clients` (body: `{ clientId }`, associa cliente existente) — Admin ou Gestor do projeto
 - `DELETE /projects/:projectId/clients/:clientId` (desassocia) — Admin ou Gestor do projeto
@@ -84,9 +85,9 @@ Mesmo padrão de `account-categories`, sem hierarquia.
 ## 5. Regras de Negócio e Validação
 
 - **Unicidade:** `taxId` único em `Client`/`Supplier` (já garantido no schema); `code` único por `projectId` em `AccountCategory` e `CostCenter` (já garantido no schema).
-- **Soft delete com verificação de dependência** (padrão já definido no design geral, seção 8.3): antes de excluir `Client`/`Supplier`/`BankAccount`/`CreditCard`/`AccountCategory`/`CostCenter`, verificar se há `Transaction` ou `BudgetLine` ativos referenciando o registro. Se houver, retornar `409 Conflict` com mensagem sugerindo desativar (`isActive: false`) em vez de excluir. `NotificationConfig` não tem soft delete (é upsert por canal).
+- **Soft delete com verificação de dependência** (padrão já definido no design geral, seção 8.3): antes de excluir, verificar se há registros dependentes ativos; se houver, retornar `409 Conflict` com mensagem sugerindo desativar (`isActive: false`) em vez de excluir. Dependentes por entidade (conforme o schema): `Client`/`Supplier` → `Transaction` e `BudgetLine`; `AccountCategory`/`CostCenter` → `Transaction` e `BudgetLine`; `BankAccount` → `Transaction`, `BankStatement` e `CreditCard.paymentAccountId`; `CreditCard` → `Transaction`. (`BudgetLine` não referencia conta bancária nem cartão.) `NotificationConfig` não tem soft delete (é upsert por canal).
 - **Hierarquia de `AccountCategory`:** ao criar ou mover uma categoria, validar que `parentId` (se informado) pertence ao mesmo `projectId` e que o `level` do registro é o imediatamente inferior ao do pai (`PACOTE` → `CATEGORIA` → `SUBCATEGORIA`). Excluir uma categoria que possui `children` ativos é bloqueado com `409`, independentemente de haver transações.
-- **Desassociação de projeto:** `DELETE /projects/:projectId/clients/:clientId` (e equivalentes para bank-accounts/credit-cards) deve ser bloqueado com `409` se existirem `Transaction`/`BudgetLine` daquele projeto específico referenciando a entidade.
+- **Desassociação de projeto:** `DELETE /projects/:projectId/clients/:clientId` deve ser bloqueado com `409` se existirem `Transaction` ou `BudgetLine` daquele projeto específico referenciando o cliente. Para bank-accounts e credit-cards, o bloqueio considera apenas `Transaction` do projeto (`BudgetLine` não referencia essas entidades).
 - **`NotificationConfig`:** validação de campos condicionais (ex.: exibir `alertDueInDays` apenas quando relevante) é responsabilidade do formulário no frontend; o backend apenas valida tipos/ranges básicos via DTO.
 
 ---
