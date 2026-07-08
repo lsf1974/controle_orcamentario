@@ -12,6 +12,7 @@ import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module
 import { CreditCardsModule } from './modules/credit-cards/credit-cards.module';
 import { AccountCategoriesModule } from './modules/account-categories/account-categories.module';
 import { CostCentersModule } from './modules/cost-centers/cost-centers.module';
+import { NotificationConfigModule } from './modules/notification-config/notification-config.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { CostCentersModule } from './modules/cost-centers/cost-centers.module';
     CreditCardsModule,
     AccountCategoriesModule,
     CostCentersModule,
+    NotificationConfigModule,
   ],
 })
 export class AppModule {}
