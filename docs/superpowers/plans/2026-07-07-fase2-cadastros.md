@@ -21,6 +21,7 @@
 - A obrigatoriedade condicional de `companyName`/`fullName` por `personType` é validada **no service, apenas no create** (helper `assertPersonNames`, Task 1) — não usar `@ValidateIf` nos DTOs, pois com `PartialType` isso quebraria PATCHes que reenviam `personType` sem o campo de nome.
 - Comandos de backend rodam em `financial-control/backend/`; frontend em `financial-control/frontend/`.
 - Testes E2E exigem PostgreSQL/Redis de dev rodando: `docker compose -f docker-compose.dev.yml up -d postgres redis` em `financial-control/` (e `.env` do backend apontando para ele, como na Fase 1).
+- Todo `INestApplication` de teste E2E deve usar o mesmo `ValidationPipe` do `main.ts` de produção: `{ whitelist: true, forbidNonWhitelisted: true, transform: true }`. Payloads com propriedades fora do DTO retornam 400 em produção — os testes precisam refletir isso.
 - Commits frequentes, mensagens em pt-BR no padrão da Fase 1 (`feat:`, `fix:`, `test:`).
 
 ---
@@ -634,7 +635,15 @@ describe('Suppliers E2E', () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    // Espelha o main.ts de produção (forbidNonWhitelisted) — se um payload
+    // trouxer propriedade fora do DTO, o teste falha igual ao app real.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     ({ token: adminToken } = await createUserAndLogin(
@@ -1357,7 +1366,15 @@ describe('Clients E2E', () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    // Espelha o main.ts de produção (forbidNonWhitelisted) — se um payload
+    // trouxer propriedade fora do DTO, o teste falha igual ao app real.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     ({ token: adminToken } = await createUserAndLogin(
@@ -1993,7 +2010,15 @@ describe('BankAccounts E2E', () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    // Espelha o main.ts de produção (forbidNonWhitelisted) — se um payload
+    // trouxer propriedade fora do DTO, o teste falha igual ao app real.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     ({ token: adminToken } = await createUserAndLogin(
@@ -2598,7 +2623,15 @@ describe('CreditCards E2E', () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    // Espelha o main.ts de produção (forbidNonWhitelisted) — se um payload
+    // trouxer propriedade fora do DTO, o teste falha igual ao app real.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     ({ token: adminToken } = await createUserAndLogin(
@@ -2831,6 +2864,25 @@ describe('AccountCategoriesService', () => {
     expect(result.id).toBe('c2');
   });
 
+  it('should block moving a node that has active children', async () => {
+    // current é um PACKAGE com filhos ativos; tenta virar CATEGORY
+    mockPrisma.accountCategory.findFirst.mockResolvedValue({
+      id: 'c1',
+      projectId: 'p1',
+      level: CategoryLevel.PACKAGE,
+      parentId: null,
+      deletedAt: null,
+    });
+    mockPrisma.accountCategory.count.mockResolvedValue(2); // filhos ativos
+    await expect(
+      service.update('p1', 'c1', {
+        level: CategoryLevel.CATEGORY,
+        parentId: 'outro-pacote',
+      }),
+    ).rejects.toThrow(ConflictException);
+    expect(mockPrisma.accountCategory.update).not.toHaveBeenCalled();
+  });
+
   it('should block remove when category has active children', async () => {
     mockPrisma.accountCategory.findFirst.mockResolvedValue({
       id: 'c1',
@@ -3054,8 +3106,22 @@ export class AccountCategoriesService {
   async update(projectId: string, id: string, dto: UpdateAccountCategoryDto) {
     const current = await this.findOneInProject(projectId, id);
     const nextLevel = dto.level ?? current.level;
+    const levelChanged = dto.level !== undefined && dto.level !== current.level;
+    const parentChanged =
+      dto.parentId !== undefined && dto.parentId !== current.parentId;
+
     // Só revalida hierarquia se level ou parentId mudaram
-    if (dto.level !== undefined || dto.parentId !== undefined) {
+    if (levelChanged || parentChanged) {
+      // Reposicionar um nó que tem filhos ativos quebraria a coerência de
+      // níveis da subárvore — bloqueia até que os filhos sejam movidos/removidos.
+      const childCount = await this.prisma.accountCategory.count({
+        where: { parentId: id, deletedAt: null },
+      });
+      if (childCount > 0) {
+        throw new ConflictException(
+          'Não é possível mudar o nível ou o pai de uma categoria que possui subcategorias ativas',
+        );
+      }
       const nextParent =
         dto.parentId !== undefined ? dto.parentId : current.parentId ?? undefined;
       await this.assertHierarchy(projectId, nextLevel, nextParent);
@@ -3191,7 +3257,7 @@ Registrar em `app.module.ts` (import + array `imports`): `AccountCategoriesModul
 - [ ] **Step 4: Rodar os testes unitários e verificar que passam**
 
 Run: `npm test -- account-categories.service`
-Expected: PASS (9 testes)
+Expected: PASS (10 testes)
 
 - [ ] **Step 5: Escrever o teste E2E**
 
@@ -3220,7 +3286,15 @@ describe('AccountCategories E2E', () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    // Espelha o main.ts de produção (forbidNonWhitelisted) — se um payload
+    // trouxer propriedade fora do DTO, o teste falha igual ao app real.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     ({ token: adminToken } = await createUserAndLogin(
@@ -3677,7 +3751,15 @@ describe('CostCenters E2E', () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    // Espelha o main.ts de produção (forbidNonWhitelisted) — se um payload
+    // trouxer propriedade fora do DTO, o teste falha igual ao app real.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     ({ token: adminToken } = await createUserAndLogin(
@@ -4053,7 +4135,15 @@ describe('NotificationConfig E2E', () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    // Espelha o main.ts de produção (forbidNonWhitelisted) — se um payload
+    // trouxer propriedade fora do DTO, o teste falha igual ao app real.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
 
     ({ token: userToken } = await createUserAndLogin(
@@ -4649,14 +4739,18 @@ export function EntityFormDialog<T extends Record<string, unknown>>({
   }, [open]);
 
   function submit(raw: Record<string, unknown>) {
-    // Remove strings vazias e NaN (campos opcionais não preenchidos — number
-    // vazio com valueAsNumber vira NaN) para não enviar valores inválidos onde
-    // o backend espera undefined.
+    // Projeta o payload SOMENTE sobre os campos declarados. Na edição, o
+    // react-hook-form retém chaves não-registradas vindas dos defaultValues
+    // (id, createdAt, updatedAt, deletedAt, projectId…); enviá-las causaria
+    // 400 no backend, que roda com forbidNonWhitelisted: true. Também descarta
+    // strings vazias e NaN (campos opcionais não preenchidos — number vazio
+    // com valueAsNumber vira NaN) para não mandar valores inválidos.
     const cleaned: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(raw)) {
+    for (const field of fields) {
+      const v = raw[field.name];
       if (v === '' || v === undefined) continue;
       if (typeof v === 'number' && Number.isNaN(v)) continue;
-      cleaned[k] = v;
+      cleaned[field.name] = v;
     }
     onSubmit(cleaned as Partial<T>);
   }
@@ -5155,7 +5249,12 @@ export default function ContasBancariasPage() {
         open={formOpen}
         title={editing ? 'Editar conta bancária' : 'Nova conta bancária'}
         fields={FIELDS}
-        defaultValues={editing ?? { accountType: 'CHECKING', isActive: true }}
+        defaultValues={
+          editing
+            ? // <input type="date"> exige yyyy-MM-dd; o backend devolve ISO completo
+              { ...editing, initialDate: editing.initialDate?.slice(0, 10) }
+            : { accountType: 'CHECKING', isActive: true }
+        }
         onSubmit={handleSubmit}
         onClose={() => setFormOpen(false)}
         submitting={isMutating}
