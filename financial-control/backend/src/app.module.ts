@@ -10,6 +10,7 @@ import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module';
 import { CreditCardsModule } from './modules/credit-cards/credit-cards.module';
+import { AccountCategoriesModule } from './modules/account-categories/account-categories.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { CreditCardsModule } from './modules/credit-cards/credit-cards.module';
     ClientsModule,
     BankAccountsModule,
     CreditCardsModule,
+    AccountCategoriesModule,
   ],
 })
 export class AppModule {}
