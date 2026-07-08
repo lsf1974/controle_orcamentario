@@ -11,6 +11,7 @@ import { ClientsModule } from './modules/clients/clients.module';
 import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module';
 import { CreditCardsModule } from './modules/credit-cards/credit-cards.module';
 import { AccountCategoriesModule } from './modules/account-categories/account-categories.module';
+import { CostCentersModule } from './modules/cost-centers/cost-centers.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AccountCategoriesModule } from './modules/account-categories/account-ca
     BankAccountsModule,
     CreditCardsModule,
     AccountCategoriesModule,
+    CostCentersModule,
   ],
 })
 export class AppModule {}
