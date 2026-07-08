@@ -4716,7 +4716,10 @@ interface EntityFormDialogProps<T> {
   submitting?: boolean;
 }
 
-export function EntityFormDialog<T extends Record<string, unknown>>({
+// T é intencionalmente sem constraint: as entidades são `interface`, que não
+// satisfazem `Record<string, unknown>`. O formulário opera internamente sobre
+// Record<string, unknown> e converte nas fronteiras (defaultValues/onSubmit).
+export function EntityFormDialog<T>({
   open,
   title,
   fields,
@@ -4730,11 +4733,13 @@ export function EntityFormDialog<T extends Record<string, unknown>>({
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<Record<string, unknown>>({ defaultValues });
+  } = useForm<Record<string, unknown>>({
+    defaultValues: defaultValues as Record<string, unknown>,
+  });
 
   // Reset ao abrir/trocar o registro editado
   useEffect(() => {
-    if (open) reset(defaultValues);
+    if (open) reset(defaultValues as Record<string, unknown>);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -4920,6 +4925,13 @@ export default function FornecedoresPage() {
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
               Editar
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => update.mutate({ id: s.id, payload: { isActive: !s.isActive } })}
+            >
+              {s.isActive ? 'Desativar' : 'Ativar'}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setDeleting(s)}>
               Excluir
@@ -5119,6 +5131,13 @@ export default function ClientesPage() {
             <Button variant="ghost" size="sm" onClick={() => { setEditing(c); setFormOpen(true); }}>
               Editar
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => update.mutate({ id: c.id, payload: { isActive: !c.isActive } })}
+            >
+              {c.isActive ? 'Desativar' : 'Ativar'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => setDeleting(c)}>
               Excluir
             </Button>
@@ -5238,6 +5257,13 @@ export default function ContasBancariasPage() {
             <Button variant="ghost" size="sm" onClick={() => { setEditing(a); setFormOpen(true); }}>
               Editar
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => update.mutate({ id: a.id, payload: { isActive: !a.isActive } })}
+            >
+              {a.isActive ? 'Desativar' : 'Ativar'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => setDeleting(a)}>
               Excluir
             </Button>
@@ -5354,6 +5380,13 @@ export default function CartoesPage() {
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => { setEditing(c); setFormOpen(true); }}>
               Editar
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => update.mutate({ id: c.id, payload: { isActive: !c.isActive } })}
+            >
+              {c.isActive ? 'Desativar' : 'Ativar'}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setDeleting(c)}>
               Excluir
@@ -5822,6 +5855,13 @@ export default function PlanoDeContasPage({
                   <Button variant="ghost" size="sm" onClick={() => { setEditing(c); setFormOpen(true); }}>
                     Editar
                   </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => update.mutate({ id: c.id, payload: { isActive: !c.isActive } })}
+                  >
+                    {c.isActive ? 'Desativar' : 'Ativar'}
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => setDeleting(c)}>
                     Excluir
                   </Button>
@@ -5934,6 +5974,13 @@ export default function CentrosDeCustoPage({
                 <div className="flex justify-end gap-2">
                   <Button variant="ghost" size="sm" onClick={() => { setEditing(c); setFormOpen(true); }}>
                     Editar
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => update.mutate({ id: c.id, payload: { isActive: !c.isActive } })}
+                  >
+                    {c.isActive ? 'Desativar' : 'Ativar'}
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setDeleting(c)}>
                     Excluir
