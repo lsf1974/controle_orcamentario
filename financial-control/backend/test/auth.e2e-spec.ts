@@ -8,6 +8,13 @@ describe('Auth E2E', () => {
   let app: INestApplication;
   let prisma: PrismaService;
 
+  // Delete físico via SQL: o soft delete da extension do Prisma manteria o
+  // e-mail ocupando a unique constraint entre execuções da suíte.
+  async function hardDeleteE2eUsers() {
+    await prisma.$executeRaw`DELETE FROM "RefreshToken" WHERE "userId" IN (SELECT id FROM "User" WHERE email LIKE '%@e2e.test')`;
+    await prisma.$executeRaw`DELETE FROM "User" WHERE email LIKE '%@e2e.test'`;
+  }
+
   beforeAll(async () => {
     const module: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -15,14 +22,19 @@ describe('Auth E2E', () => {
 
     app = module.createNestApplication();
     app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
     );
     prisma = app.get(PrismaService);
     await app.init();
+    await hardDeleteE2eUsers();
   });
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { email: { contains: '@e2e.test' } } });
+    await hardDeleteE2eUsers();
     await app.close();
   });
 
