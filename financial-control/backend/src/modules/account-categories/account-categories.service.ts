@@ -38,6 +38,7 @@ export class AccountCategoriesService {
     projectId: string,
     level: CategoryLevel,
     parentId?: string,
+    selfId?: string,
   ) {
     if (level === CategoryLevel.PACKAGE) {
       if (parentId) {
@@ -51,6 +52,12 @@ export class AccountCategoriesService {
     if (!parentId) {
       throw new BadRequestException(
         `Nível ${level} exige uma categoria pai (parentId)`,
+      );
+    }
+
+    if (parentId === selfId) {
+      throw new BadRequestException(
+        'Uma categoria não pode ser pai de si mesma',
       );
     }
 
@@ -121,14 +128,23 @@ export class AccountCategoriesService {
           'Não é possível mudar o nível ou o pai de uma categoria que possui subcategorias ativas',
         );
       }
+      // Um PACKAGE nunca tem pai: ao converter para PACKAGE, o pai herdado é
+      // sempre descartado (senão a validação rejeitaria o pai antigo).
       const nextParent =
-        dto.parentId !== undefined ? dto.parentId : current.parentId ?? undefined;
-      await this.assertHierarchy(projectId, nextLevel, nextParent);
+        nextLevel === CategoryLevel.PACKAGE
+          ? undefined
+          : dto.parentId !== undefined
+            ? dto.parentId
+            : current.parentId ?? undefined;
+      await this.assertHierarchy(projectId, nextLevel, nextParent, id);
     }
+    // Persiste a limpeza do pai quando o nó vira PACKAGE.
+    const data =
+      nextLevel === CategoryLevel.PACKAGE ? { ...dto, parentId: null } : dto;
     try {
       return await this.prisma.accountCategory.update({
         where: { id },
-        data: dto,
+        data,
       });
     } catch (error) {
       throwConflictIfUniqueViolation(

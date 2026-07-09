@@ -174,4 +174,44 @@ describe('AccountCategoriesService', () => {
       data: { deletedAt: expect.any(Date), isActive: false },
     });
   });
+
+  it('should reject setting a category as its own parent', async () => {
+    // current é um PACKAGE sem filhos; PATCH tenta apontar o pai para si mesmo
+    mockPrisma.accountCategory.findFirst.mockResolvedValue({
+      id: 'c1',
+      projectId: 'p1',
+      level: CategoryLevel.PACKAGE,
+      parentId: null,
+      deletedAt: null,
+    });
+    mockPrisma.accountCategory.count.mockResolvedValue(0); // sem filhos ativos
+    await expect(
+      service.update('p1', 'c1', {
+        level: CategoryLevel.CATEGORY,
+        parentId: 'c1',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(mockPrisma.accountCategory.update).not.toHaveBeenCalled();
+  });
+
+  it('should clear parentId when converting a CATEGORY to PACKAGE', async () => {
+    mockPrisma.accountCategory.findFirst.mockResolvedValue({
+      id: 'c1',
+      projectId: 'p1',
+      level: CategoryLevel.CATEGORY,
+      parentId: 'pkg',
+      deletedAt: null,
+    });
+    mockPrisma.accountCategory.count.mockResolvedValue(0);
+    mockPrisma.accountCategory.update.mockResolvedValue({});
+
+    // parentId não é enviado (o form omite campos vazios); mesmo assim o pai
+    // herdado deve ser limpo ao virar PACKAGE, sem estourar a validação.
+    await service.update('p1', 'c1', { level: CategoryLevel.PACKAGE });
+
+    expect(mockPrisma.accountCategory.update).toHaveBeenCalledWith({
+      where: { id: 'c1' },
+      data: { level: CategoryLevel.PACKAGE, parentId: null },
+    });
+  });
 });

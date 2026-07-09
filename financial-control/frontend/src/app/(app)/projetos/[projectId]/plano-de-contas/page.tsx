@@ -38,9 +38,10 @@ export default function PlanoDeContasPage({
   const [formOpen, setFormOpen] = useState(false);
   const [deleting, setDeleting] = useState<AccountCategory | null>(null);
 
-  // Pais possíveis = pacotes e categorias existentes (para montar a hierarquia)
+  // Pais possíveis = pacotes e categorias existentes (para montar a hierarquia),
+  // exceto o próprio registro em edição (não pode ser pai de si mesmo).
   const parentOptions = rows
-    .filter((r) => r.level !== 'SUBCATEGORY')
+    .filter((r) => r.level !== 'SUBCATEGORY' && r.id !== editing?.id)
     .map((r) => ({ value: r.id, label: `${r.code} — ${r.name}` }));
 
   const fields: FieldSpec[] = [
